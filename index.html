@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Suivi & Affectation Atelier MPIA / MSPC</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+<style>
+body { font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:#f8fafc; }
+.sidebar-active { background:#2563eb; color:white; }
+.loader {
+  border:4px solid #f3f3f3;
+  border-top:4px solid #2563eb;
+  border-radius:50%;
+  width:30px; height:30px;
+  animation:spin 1s linear infinite;
+}
+@keyframes spin { 100% { transform:rotate(360deg);} }
+</style>
+</head>
+
+<body class="flex min-h-screen text-slate-800">
+
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2 pointer-events-none"></div>
+
+<aside class="w-64 bg-slate-900 text-white p-6 flex flex-col justify-between shadow-xl fixed h-screen z-10">
+<div>
+  <h1 class="text-2xl font-bold text-blue-400 text-center">MSPC-MPIA Pro v2.3</h1>
+  
+  <!-- Horloge & Date en Français -->
+  <div class="text-center mt-2 mb-4 bg-slate-800/50 p-3 rounded-xl border border-slate-700/50">
+    <p id="live-date" class="text-xs text-slate-300 font-medium capitalize"></p>
+    <p id="live-time" class="text-lg font-black text-blue-300 mt-1 tracking-wider"></p>
+  </div>
+
+  <!-- SÉLECTION DU NIVEAU GLOBALE -->
+  <div class="mb-6">
+    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Classe / Niveau</label>
+    <select id="global-classe-select" onchange="changerClasseActive()" class="w-full border border-slate-700 p-2.5 rounded-xl bg-slate-800 text-white font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+      <option value="2PMIA">2PMIA</option>
+      <option value="1MSPC">1ère MSPC</option>
+      <option value="TMSPC">TMSPC</option>
+    </select>
+  </div>
+
+  <nav class="space-y-2">
+    <button onclick="showSection('tous')" id="nav-tous"
+      class="sidebar-active w-full p-3 rounded-xl text-left font-semibold flex items-center gap-2 transition-colors">
+      <span>👥</span> Vue d'Ensemble
+    </button>
+
+    <button onclick="showSection('assign')" id="nav-assign"
+      class="w-full p-3 rounded-xl text-left font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-2">
+      <span>➕</span> Affectation & PDF
+    </button>
+
+    <button onclick="showSection('jour')" id="nav-jour"
+      class="w-full p-3 rounded-xl text-left font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-2">
+      <span>📅</span> Historique Jour
+    </button>
+
+    <button onclick="showSection('retard')" id="nav-retard"
+      class="w-full p-3 rounded-xl text-left font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center justify-between">
+      <div class="flex items-center gap-2"><span>⚠️</span> Retards</div>
+      <span id="badge-retard" class="bg-red-600 text-white text-xs font-bold px-2.5 py-1 rounded-full">0</span>
+    </button>
+  </nav>
+</div>
+
+<div class="border-t border-slate-800 pt-6 space-y-3">
+  <button onclick="syncData()" class="w-full p-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold transition-colors flex items-center justify-center gap-2">
+    <span>🔄</span> Synchro Réseau
+  </button>
+  <button onclick="exportData()" class="w-full p-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors flex items-center justify-center gap-2">
+    <span>📥</span> Backup Excel
+  </button>
+</div>
+</aside>
+
+<main class="flex-1 pl-72 pr-8 py-8 min-h-screen">
+
+  <div id="loading-overlay" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm">
+    <div class="bg-white p-6 rounded-2xl flex flex-col items-center shadow-2xl">
+      <div class="loader mb-4"></div>
+      <p id="loading-text" class="font-bold text-slate-700">Synchronisation...</p>
+    </div>
+  </div>
+
+  <!-- LEGENDE AVEC NOMBRE D'ELEVES DYNAMIQUE & CLIQUABLE -->
+  <div class="max-w-4xl mx-auto mb-6 flex flex-wrap gap-3 text-sm font-semibold select-none">
+    <div onclick="filtrerParCategorie('green')" id="btn-filter-green" class="px-4 py-2 rounded-xl bg-green-100 text-green-800 border border-green-200 flex items-center gap-1.5 cursor-pointer hover:bg-green-200 transition-all">
+      <span>🟢 Actif (OK) :</span>
+      <span id="count-green" class="font-black">0</span>
+    </div>
+    <div onclick="filtrerParCategorie('amber')" id="btn-filter-amber" class="px-4 py-2 rounded-xl bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-1.5 cursor-pointer hover:bg-amber-200 transition-all">
+      <span>🟠 Deuxième jour :</span>
+      <span id="count-amber" class="font-black">0</span>
+    </div>
+    <div onclick="filtrerParCategorie('red')" id="btn-filter-red" class="px-4 py-2 rounded-xl bg-red-100 text-red-800 border border-red-200 flex items-center gap-1.5 cursor-pointer hover:bg-red-200 transition-all">
+      <span>🔴 Retard :</span>
+      <span id="count-red" class="font-black">0</span>
+    </div>
+    <div onclick="filtrerParCategorie('gray')" id="btn-filter-gray" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 flex items-center gap-1.5 cursor-pointer hover:bg-slate-200 transition-all">
+      <span>⚪ Sans activité :</span>
+      <span id="count-gray" class="font-black">0</span>
+    </div>
+    <div onclick="filtrerParCategorie(null)" id="btn-filter-all" class="px-4 py-2 rounded-xl bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1.5 cursor-pointer hover:bg-blue-200 transition-all ring-4 ring-blue-500 scale-[1.03]">
+      <span>🎓 Effectif Groupe :</span>
+      <span id="count-all" class="font-black">0</span>
+    </div>
+  </div>
+
+  <section id="section-tous" class="max-w-5xl mx-auto">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+      <h2 class="text-2xl font-bold text-slate-900">Cartes de Suivi - <span id="nom-classe-titre" class="text-blue-600">2PMIA</span> <span id="info-limit-visuel" class="text-sm font-normal text-slate-500">(15 max affichés)</span></h2>
+      <input type="text" id="search-bar" oninput="genererCartesTableauDeBord()" placeholder="🔍 Rechercher un élève ou un TP..." class="border p-2 px-4 rounded-xl w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+    <div id="grid-cartes-tous" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"></div>
+  </section>
+
+  <section id="section-assign" class="hidden max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div class="md:col-span-2 bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-bold text-slate-900">Nouvelle Affectation (<span class="text-blue-600 classe-contextuelle">2PMIA</span>)</h2>
+        <button onclick="resetForm()" class="text-sm text-slate-500 hover:text-blue-600 font-semibold transition-colors">Réinitialiser 🔄</button>
+      </div>
+      <div class="space-y-5">
+        <div>
+          <label class="block mb-2 font-bold text-slate-700">Sélectionner l'Élève</label>
+          <select id="select-eleve" onchange="chargerFicheEleve()" class="w-full border p-3 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer text-lg font-medium"></select>
+        </div>
+        <div class="grid grid-cols-3 gap-4">
+          <div class="col-span-1">
+            <label class="block mb-2 font-bold text-slate-700">Période</label>
+            <select id="select-periode" onchange="updateTPList()" class="w-full border p-3 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer font-semibold">
+              <option value="1">Période 1</option>
+              <option value="2">Période 2</option>
+              <option value="3">Période 3</option>
+              <option value="4">Période 4</option>
+            </select>
+          </div>
+          <div class="col-span-2">
+            <label class="block mb-2 font-bold text-slate-700">TP disponible (Non fait)</label>
+            <select id="select-tp" class="w-full border p-3 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"></select>
+          </div>
+        </div>
+        <button onclick="saveAssignment()" class="w-full bg-slate-900 text-white p-4 rounded-2xl font-bold hover:bg-blue-600 transition-colors shadow-lg flex items-center justify-center gap-2 mt-4 text-lg">
+          <span>💾</span> Enregistrer & Imprimer le PDF Éléve
+        </button>
+      </div>
+    </div>
+    
+    <div class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex flex-col justify-between">
+      <div>
+        <h3 class="text-xl font-bold mb-4 text-slate-900 border-b pb-2">📋 Infos Élève</h3>
+        <p class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Nombre total de TP effectués</p>
+        <p id="fiche-total-tp" class="text-2xl font-black text-blue-600 mb-4">-</p>
+        <p class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">Activité d'Atelier en cours</p>
+        <p id="fiche-dernier-tp" class="text-base font-semibold text-slate-800 bg-slate-50 p-3 rounded-xl border mb-4 italic">Aucun</p>
+      </div>
+      <div>
+        <label class="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Historique individuel</label>
+        <textarea id="fiche-historique" readonly class="w-full h-44 text-xs font-mono p-3 bg-slate-900 text-emerald-400 rounded-xl resize-none border-0 focus:ring-0"></textarea>
+      </div>
+    </div>
+  </section>
+
+  <section id="section-jour" class="hidden max-w-4xl mx-auto bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+    <h2 class="text-2xl font-bold mb-4 text-slate-900">Activités de l'atelier à une date précise (<span class="classe-contextuelle">2PMIA</span>)</h2>
+    <div class="flex gap-4 items-end mb-6 max-w-md">
+      <div class="flex-1">
+        <label class="block mb-2 font-bold text-slate-700">Choisir une date</label>
+        <input type="date" id="input-date-recherche" class="w-full border p-3 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <button onclick="afficherHistoriqueJour()" class="bg-blue-600 hover:bg-blue-500 text-white font-bold p-3.5 rounded-xl transition-colors">Afficher l'atelier</button>
+    </div>
+    <div id="resultat-historique-jour" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+  </section>
+
+  <section id="section-retard" class="hidden max-w-4xl mx-auto">
+    <h2 class="text-2xl font-bold mb-6 text-slate-900 text-red-600 flex items-center gap-2">⚠️ Élèves immobiles (<span class="classe-contextuelle">2PMIA</span>)</h2>
+    <div id="grid-cartes-retard" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+  </section>
+
+</main>
+
+<script>
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwhHOlCxTTr9PZw1wYBE03FLBIial7ruQPb4HFY9U2LUv0GGOHBAtoye3VGRJzzamoi/exec"; 
+
+// Tables d'accueil segmentées pour gérer les classes
+let bddElevesParClasse = {"2PMIA": [], "1MSPC": [], "TMSPC": []};
+let bddTpsParClasse = {
+    "2PMIA": {"1":[], "2":[], "3":[], "4":[]},
+    "1MSPC": {"1":[], "2":[], "3":[], "4":[]},
+    "TMSPC": {"1":[], "2":[], "3":[], "4":[]}
+};
+
+let listEleves = []; 
+let dataTP = {"1":[], "2":[], "3":[], "4":[]}; 
+let globalSuivi = [];
+let dernierStatutEleves = {};
+let filtreActifCategorie = null; 
+let classeActive = "2PMIA";
+
+window.onload = function() {
+    document.getElementById('input-date-recherche').value = new Date().toISOString().split('T')[0];
+    if(localStorage.getItem('mpia_classe_active')) {
+        classeActive = localStorage.getItem('mpia_classe_active');
+        document.getElementById('global-classe-select').value = classeActive;
+    }
+    demarrerHorloge();
+    chargerDonneesCache();
+    syncData();
+};
+
+function demarrerHorloge() {
+    const optionsDate = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    function actualiser() {
+        const maintenant = new Date();
+        document.getElementById('live-date').innerText = maintenant.toLocaleDateString('fr-FR', optionsDate);
+        document.getElementById('live-time').innerText = maintenant.toLocaleTimeString('fr-FR');
+    }
+    actualiser();
+    setInterval(actualiser, 1000);
+}
+
+function changerClasseActive() {
+    classeActive = document.getElementById('global-classe-select').value;
+    localStorage.setItem('mpia_classe_active', classeActive);
+    
+    document.getElementById('nom-classe-titre').innerText = classeActive;
+    document.querySelectorAll('.classe-contextuelle').forEach(el => el.innerText = classeActive);
+
+    filtreActifCategorie = null;
+    filtrerParCategorie(null); 
+    
+    processAndRender();
+    showToast(`Niveau actif configuré : ${classeActive}`);
+}
+
+function formaterDateEnFrancais(dateIsoString) {
+    if (!dateIsoString) return "";
+    try {
+        const d = new Date(dateIsoString);
+        if (isNaN(d.getTime())) return dateIsoString;
+        const optionsDate = { day: '2-digit', month: '2-digit', year: 'numeric' };
+        const optionsHeure = { hour: '2-digit', minute: '2-digit' };
+        return `le ${d.toLocaleDateString('fr-FR', optionsDate)} à ${d.toLocaleTimeString('fr-FR', optionsHeure)}`;
+    } catch (e) { return dateIsoString; }
+}
+
+var personal_context = null;
+
+function showLoader(text) {
+    document.getElementById('loading-text').innerText = text;
+    document.getElementById('loading-overlay').classList.remove('hidden');
+}
+
+function hideLoader() { document.getElementById('loading-overlay').classList.add('hidden'); }
+
+function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `p-4 rounded-xl shadow-lg text-white font-bold transition-all duration-300 transform translate-y-2 opacity-0 pointer-events-auto flex items-center gap-2 ${
+        type === 'error' ? 'bg-red-600' : type === 'warning' ? 'bg-amber-500' : 'bg-emerald-600'
+    }`;
+    toast.innerHTML = `<span>${type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅'}</span> ${message}`;
+    container.appendChild(toast);
+    setTimeout(() => { toast.classList.remove('translate-y-2', 'opacity-0'); }, 10);
+    setTimeout(() => {
+        toast.classList.add('translate-y-2', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+function syncData() {
+    showLoader("Synchronisation réseau (2PMIA / 1MSPC / TMSPC)...");
+    let script = document.createElement("script");
+    script.src = `${GOOGLE_SCRIPT_URL}?action=getData&callback=traiterDonneesReseau`;
+    script.onerror = function() {
+        hideLoader();
+        showToast("Erreur réseau. Données locales utilisées.", "warning");
+    };
+    document.body.appendChild(script);
+}
+
+function traiterDonneesReseau(reponse) {
+    bddElevesParClasse = reponse.elevesParClasse || {"2PMIA": [], "1MSPC": [], "TMSPC": []};
+    bddTpsParClasse = reponse.tpsParClasse || {"2PMIA": {"1":[],"2":[],"3":[],"4":[]}, "1MSPC": {"1":[],"2":[],"3":[],"4":[]}, "TMSPC": {"1":[],"2":[],"3":[],"4":[]}};
+    globalSuivi = reponse.suivi || [];
+    
+    localStorage.setItem('mpia_v3_eleves', JSON.stringify(bddElevesParClasse));
+    localStorage.setItem('mpia_v3_tps', JSON.stringify(bddTpsParClasse));
+    localStorage.setItem('mpia_v3_suivi', JSON.stringify(globalSuivi));
+
+    processAndRender();
+    const oldScript = document.querySelector(`script[src*="callback=traiterDonneesReseau"]`);
+    if(oldScript) document.body.removeChild(oldScript);
+    hideLoader();
+    showToast("Base de données synchronisée !");
+}
+
+function chargerDonneesCache() {
+    const localE = localStorage.getItem('mpia_v3_eleves');
+    const localT = localStorage.getItem('mpia_v3_tps');
+    const localS = localStorage.getItem('mpia_v3_suivi');
+
+    if(localE && localT && localS) {
+        bddElevesParClasse = JSON.parse(localE);
+        bddTpsParClasse = JSON.parse(localT);
+        globalSuivi = JSON.parse(localS);
+        processAndRender();
+    }
+}
+
+function processAndRender() {
+    listEleves = bddElevesParClasse[classeActive] || [];
+    dataTP = bddTpsParClasse[classeActive] || {"1":[], "2":[], "3":[], "4":[]};
+    
+    dernierStatutEleves = {};
+    listEleves.forEach(nom => { dernierStatutEleves[nom] = []; });
+    
+    const suiviTrie = [...globalSuivi].reverse();
+    suiviTrie.forEach(item => {
+        if(dernierStatutEleves[item.eleve] !== undefined) {
+            if (!item.classe || item.classe === classeActive) {
+                dernierStatutEleves[item.eleve].push({ 
+                    date: item.date, 
+                    tp: item.tp, 
+                    dateIso: item.dateIso || item.date 
+                });
+            }
+        }
+    });
+
+    renderSelectEleves();
+    updateTPList();
+    genererCartesTableauDeBord();
+}
+
+function renderSelectEleves() {
+    const sel = document.getElementById('select-eleve');
+    if(!sel) return;
+    if(listEleves.length === 0) {
+        sel.innerHTML = '<option value="">⚠️ Aucun élève trouvé en ' + classeActive + '</option>';
+        return;
+    }
+    sel.innerHTML = '<option value="" disabled selected>-- Choisir élève --</option>';
+    listEleves.forEach(e => { sel.innerHTML += `<option value="${e}">${e}</option>`; });
+    resetFiche();
+}
+
+function resetFiche() {
+    document.getElementById('fiche-total-tp').innerText = "-";
+    document.getElementById('fiche-dernier-tp').innerText = "Aucun";
+    document.getElementById('fiche-historique').value = "";
+}
+
+function resetForm() {
+    document.getElementById('select-eleve').value = "";
+    document.getElementById('select-periode').value = "1";
+    updateTPList();
+    resetFiche();
+    showToast("Formulaire réinitialisé.", "warning");
+}
+
+function updateTPList() {
+    const periode = document.getElementById('select-periode').value;
+    const sel = document.getElementById('select-tp');
+    const nomEleve = document.getElementById('select-eleve').value;
+    
+    if(!sel) return;
+    sel.innerHTML = '<option value="" disabled selected>-- Choisir un TP --</option>';
+    
+    const historiqueEleve = dernierStatutEleves[nomEleve] || [];
+    const tpsDejaFaits = historiqueEleve.map(h => h.tp);
+
+    let tpsAffiches = 0;
+    (dataTP[periode] || []).forEach((tp, index) => {
+        if (!tpsDejaFaits.includes(tp.name)) {
+            sel.innerHTML += `<option value="${index}">${tp.name}</option>`;
+            tpsAffiches++;
+        }
+    });
+
+    if (tpsAffiches === 0 && nomEleve) {
+        sel.innerHTML = '<option value="" disabled selected>🎉 Tous les TP de cette période ont été faits !</option>';
+    }
+}
+
+function chargerFicheEleve() {
+    const nom = document.getElementById('select-eleve').value;
+    const historique = dernierStatutEleves[nom] || [];
+    
+    document.getElementById('fiche-total-tp').innerText = historique.length;
+    
+    if(historique.length > 0) {
+        const dernier = historique[historique.length - 1];
+        document.getElementById('fiche-dernier-tp').innerText = dernier.tp;
+        
+        let txt = "";
+        [...historique].reverse().forEach(h => {
+            txt += `📅 ${formaterDateEnFrancais(h.dateIso || h.date)}\n📘 ${h.tp}\n\n`;
+        });
+        document.getElementById('fiche-historique').value = txt;
+    } else {
+        document.getElementById('fiche-dernier-tp').innerText = "Aucun TP enregistré";
+        document.getElementById('fiche-historique').value = "Aucun historique.";
+    }
+    updateTPList();
+}
+
+function calculerJoursOuvrés(dateDebut, dateFin) {
+    let count = 0;
+    let curDate = new Date(dateDebut.getTime());
+    curDate.setHours(0,0,0,0);
+    const targetDate = new Date(dateFin.getTime());
+    targetDate.setHours(0,0,0,0);
+
+    while (curDate < targetDate) {
+        curDate.setDate(curDate.getDate() + 1);
+        const dayOfWeek = curDate.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) { count++; }
+    }
+    return count;
+}
+
+function determinerCouleurEtEcart(dateIsoString) {
+    if(!dateIsoString) return { status: "gray", bg: "bg-slate-100 text-slate-500 border-slate-200 opacity-60 grayscale scale-[0.98]", text: "text-slate-400", label: "💤 Sans activité", jours: 999 };
+    const dateAssignation = new Date(dateIsoString);
+    const dateAujourdhui = new Date();
+    
+    if (isNaN(dateAssignation.getTime())) {
+        return { status: "green", bg: "bg-green-50 text-green-900 border-green-200", text: "text-green-600", label: "🟢 Actif (OK)", jours: 0 };
+    }
+    
+    const joursOuvres = calculerJoursOuvrés(dateAssignation, dateAujourdhui);
+    if (joursOuvres >= 2) return { status: "red", bg: "bg-red-50 text-red-900 border-red-200", text: "text-red-600", label: "🔴 Retard", jours: joursOuvres };
+    if (joursOuvres === 1) return { status: "amber", bg: "bg-amber-50 text-amber-900 border-amber-200", text: "text-amber-600", label: "🟠 Deuxième jour", jours: joursOuvres };
+    return { status: "green", bg: "bg-green-50 text-green-900 border-green-200", text: "text-green-600", label: "🟢 Actif (OK)", jours: joursOuvres };
+}
+
+function redirigerVersAffectation(nomEleve) {
+    const selectEleve = document.getElementById('select-eleve');
+    if (selectEleve) {
+        selectEleve.value = nomEleve;
+        chargerFicheEleve();
+        showSection('assign');
+    }
+}
+
+function filtrerParCategorie(cat) {
+    if (filtreActifCategorie === cat) { filtreActifCategorie = null; } 
+    else { filtreActifCategorie = cat; }
+    
+    const categories = ['green', 'amber', 'red', 'gray', 'all'];
+    categories.forEach(c => {
+        const btn = document.getElementById(`btn-filter-${c}`);
+        if (!btn) return;
+        if ((filtreActifCategorie === c) || (c === 'all' && !filtreActifCategorie)) {
+            btn.className = btn.className.replace(/ring-.*?\s/g, '').replace(/scale-.*?\s/g, ''); 
+            btn.classList.add('ring-4', 'ring-blue-500', 'scale-[1.03]');
+        } else {
+            btn.classList.remove('ring-4', 'ring-blue-500', 'scale-[1.03]');
+        }
+    });
+    genererCartesTableauDeBord();
+}
+
+function genererCartesTableauDeBord() {
+    const gridTous = document.getElementById('grid-cartes-tous');
+    const gridRetard = document.getElementById('grid-cartes-retard');
+    if (!gridTous || !gridRetard) return;
+
+    const searchVal = document.getElementById('search-bar').value.toLowerCase().trim();
+    let htmlTous = "", htmlRetard = "";
+    let compteurRetards = 0, compteurAffiches = 0;
+    let totalGreen = 0, totalAmber = 0, totalRed = 0, totalGray = 0;
+
+    const keys = Object.keys(dernierStatutEleves);
+    if (keys.length === 0) {
+        gridTous.innerHTML = `<p class='italic text-slate-400 p-4'>Aucun élève chargé pour le niveau ${classeActive}.</p>`;
+        gridRetard.innerHTML = `<p class='italic text-slate-400 p-4'>Aucun retard.</p>`;
+        return;
+    }
+
+    keys.sort().forEach(nom => {
+        const historique = dernierStatutEleves[nom];
+        const aJour = historique.length > 0 ? historique[historique.length - 1] : null;
+        const dateLancementSource = aJour ? (aJour.dateIso || aJour.date) : null;
+        const style = determinerCouleurEtEcart(dateLancementSource);
+        
+        if (style.status === "green") totalGreen++;
+        else if (style.status === "amber") totalAmber++;
+        else if (style.status === "red") totalRed++;
+        else if (style.status === "gray") totalGray++;
+
+        const correspondRecherche = !searchVal || nom.toLowerCase().includes(searchVal) || (aJour && aJour.tp.toLowerCase().includes(searchVal));
+        const correspondCategorie = !filtreActifCategorie || (style.status === filtreActifCategorie);
+
+        if (correspondRecherche && correspondCategorie) {
+            if (compteurAffiches < 15) {
+                htmlTous += `
+                    <div onclick="redirigerVersAffectation('${nom.replace(/'/g, "\\'")}')" class="p-5 rounded-2xl border shadow-sm flex flex-col justify-between ${style.bg} cursor-pointer transition-all hover:scale-[1.01] hover:shadow-md">
+                        <div>
+                            <h3 class="font-bold text-lg text-slate-900">${nom}</h3>
+                            <p class="text-sm font-semibold mt-2">${aJour ? '📘 ' + aJour.tp : '💤 Sans activité'}</p>
+                        </div>
+                        <div class="mt-4 border-t pt-2 border-black/5 flex justify-between items-center text-xs">
+                            <span class="font-bold">${style.label}</span>
+                            <span class="font-mono text-slate-500">${aJour ? 'Démarré ' + formaterDateEnFrancais(dateLancementSource) : ''}</span>
+                        </div>
+                    </div>`;
+                compteurAffiches++;
+            }
+        }
+        
+        if(style.jours >= 2 && aJour) {
+            htmlRetard += `
+                <div onclick="redirigerVersAffectation('${nom.replace(/'/g, "\\'")}')" class="p-5 rounded-2xl border shadow-sm flex flex-col justify-between ${style.bg} cursor-pointer transition-all hover:scale-[1.01]">
+                    <div>
+                        <h3 class="font-bold text-lg text-slate-900">${nom}</h3>
+                        <p class="text-sm font-semibold mt-2">📘 ${aJour.tp}</p>
+                    </div>
+                    <div class="mt-4 border-t pt-2 border-black/5 flex justify-between items-center text-xs">
+                        <span class="font-bold">🔴 Bloqué depuis ${style.jours} j. ouvrés</span>
+                        <span class="font-mono text-slate-500">Démarré ${formaterDateEnFrancais(dateLancementSource)}</span>
+                    </div>
+                </div>`;
+            compteurRetards++;
+        }
+    });
+
+    document.getElementById('count-green').innerText = totalGreen;
+    document.getElementById('count-amber').innerText = totalAmber;
+    document.getElementById('count-red').innerText = totalRed;
+    document.getElementById('count-gray').innerText = totalGray;
+    document.getElementById('count-all').innerText = keys.length;
+
+    const labelLimit = document.getElementById('info-limit-visuel');
+    if (labelLimit) {
+        labelLimit.innerText = filtreActifCategorie ? `(Filtre actif - ${compteurAffiches} affichés)` : `(15 max affichés)`;
+    }
+
+    gridTous.innerHTML = htmlTous || "<p class='italic text-slate-400 p-4'>Aucun élève.</p>";
+    gridRetard.innerHTML = htmlRetard || `<p class='text-green-600 font-bold bg-green-50 p-4 border border-green-200 rounded-xl w-full text-center'>🎉 Aucun élève en retard en ${classeActive} !</p>`;
+    
+    const badge = document.getElementById('badge-retard');
+    if (badge) badge.innerText = compteurRetards;
+}
+
+function afficherHistoriqueJour() {
+    const dateCible = document.getElementById('input-date-recherche').value;
+    if(!dateCible) { showToast("Veuillez sélectionner une date.", "error"); return; }
+    
+    const zoneResultats = document.getElementById('resultat-historique-jour');
+    let htmlResultat = "";
+    const dateSelectionnee = new Date(dateCible);
+
+    Object.keys(dernierStatutEleves).sort().forEach(nom => {
+        const historique = dernierStatutEleves[nom];
+        let activiteALInstantT = null;
+
+        historique.forEach(act => {
+            let dateAct = new Date((act.dateIso || act.date).split("T")[0]);
+            if(dateAct <= dateSelectionnee) { activiteALInstantT = act; }
+        });
+
+        if(activiteALInstantT) {
+            const style = determinerCouleurEtEcart(activiteALInstantT.dateIso || activiteALInstantT.date);
+            htmlResultat += `
+                <div onclick="redirigerVersAffectation('${nom.replace(/'/g, "\\'")}')" class="p-4 rounded-xl border border-slate-200 bg-white shadow-sm flex items-center justify-between cursor-pointer hover:scale-[1.01] transition-all">
+                    <div>
+                        <div class="font-bold text-slate-900">${nom}</div>
+                        <div class="text-sm text-slate-600 mt-1">📘 ${activiteALInstantT.tp}</div>
+                    </div>
+                    <div class="text-right text-xs font-semibold ${style.text}">
+                        <div>Débuté</div>
+                        <div>${formaterDateEnFrancais(activiteALInstantT.dateIso || activiteALInstantT.date)}</div>
+                    </div>
+                </div>`;
+        }
+    });
+
+    zoneResultats.innerHTML = htmlResultat || "<div class='p-4 bg-slate-100 text-slate-500 rounded-xl col-span-2 text-center italic'>Aucune activité à cette date.</div>";
+}
+
+async function injecterEtiquettePdf(eleve, tp) {
+    showLoader("Génération de l'énoncé personnalisé (PDF)...");
+    let cleanUrl = tp.pdf.trim();
+    if (cleanUrl.includes("github.com") && cleanUrl.includes("/blob/")) {
+        cleanUrl = cleanUrl.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/");
+    }
+
+    let fileArrayBuffer = null;
+    const proxies = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`,
+        `https://corsproxy.io/?${encodeURIComponent(cleanUrl)}`,
+        cleanUrl 
+    ];
+
+    for (const url of proxies) {
+        try {
+            const response = await fetch(url);
+            if (response.ok) {
+                fileArrayBuffer = await response.arrayBuffer();
+                if (fileArrayBuffer && fileArrayBuffer.byteLength > 0) break; 
+            }
+        } catch (e) { console.warn(`Proxy alternatif activé.`); }
+    }
+
+    if (!fileArrayBuffer || fileArrayBuffer.byteLength === 0) {
+        hideLoader();
+        showToast("Impossible de récupérer le PDF sur GitHub. Vérifiez l'URL.", "error");
+        return false;
+    }
+
+    try {
+        let pdfCharge = await PDFLib.PDFDocument.load(fileArrayBuffer);
+        const pages = pdfCharge.getPages();
+        if(pages.length === 0) throw new Error("Fichier vide.");
+        
+        const premierePage = pages[0];
+        const { height } = premierePage.getSize();
+
+        premierePage.drawRectangle({
+            x: 15, y: height - 55, width: 280, height: 45,
+            color: PDFLib.rgb(1, 1, 1),
+            borderColor: PDFLib.rgb(0.15, 0.23, 0.43),
+            borderWidth: 1.5,
+        });
+
+        const fontBold = await pdfCharge.embedFont(PDFLib.StandardFonts.HelveticaBold);
+        const fontRegular = await pdfCharge.embedFont(PDFLib.StandardFonts.Helvetica);
+
+        let nomEleveAffiche = eleve.toUpperCase();
+        if(nomEleveAffiche.length > 32) nomEleveAffiche = nomEleveAffiche.substring(0, 30) + "...";
+
+        premierePage.drawText(`ÉLÈVE : ${nomEleveAffiche}`, { x: 27, y: height - 29, size: 10, font: fontBold, color: PDFLib.rgb(0, 0, 0) });
+        premierePage.drawText(`Date : ${new Date().toLocaleDateString('fr-FR')}  |  ${tp.name.substring(0, 25)}`, { x: 27, y: height - 43, size: 8.5, font: fontRegular, color: PDFLib.rgb(0.3, 0.3, 0.3) });
+
+        const pdfSauvegarde = await pdfCharge.save();
+        const blob = new Blob([pdfSauvegarde], { type: 'application/pdf' });
+        const pathTemporaire = URL.createObjectURL(blob);
+        hideLoader();
+
+        const fenetreImpression = window.open(pathTemporaire, '_blank');
+        if (fenetreImpression) {
+            fenetreImpression.onload = function() {
+                fenetreImpression.focus();
+                fenetreImpression.print();
+            };
+        } else {
+            showToast("⚠️ Fenêtre bloquée. Téléchargement manuel lancé.", "warning");
+            const elementAncre = document.createElement('a');
+            elementAncre.href = pathTemporaire;
+            elementAncre.download = `TP_${tp.name.replace(/[^a-zA-Z0-9]/g, '_')}_${eleve.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+            document.body.appendChild(elementAncre);
+            elementAncre.click();
+            document.body.removeChild(elementAncre);
+        }
+        setTimeout(() => URL.revokeObjectURL(pathTemporaire), 5000); 
+        return true;
+    } catch (err) {
+        console.error(err);
+        hideLoader();
+        showToast(`Échec d'édition du PDF : ${err.message}`, "error");
+        return false;
+    }
+}
+
+async function saveAssignment() {
+    const eleve = document.getElementById('select-eleve').value;
+    const p = document.getElementById('select-periode').value;
+    const tpIdx = document.getElementById('select-tp').value;
+
+    if(!eleve || tpIdx === "") { showToast("Sélectionnez un élève et un TP valide.", "error"); return; }
+    
+    const tpSelectionne = dataTP[p][tpIdx];
+    const succesPDF = await injecterEtiquettePdf(eleve, tpSelectionne);
+    if(!succesPDF) return;
+
+    showLoader("Mise à jour de la base de données d'atelier...");
+
+    const dateLocaleIso = new Date().toISOString();
+    const dateLocaleLisible = new Date().toLocaleDateString('fr-FR');
+
+    const nouvelleEntree = {
+        eleve: eleve,
+        classe: classeActive, 
+        tp: tpSelectionne.name,
+        date: dateLocaleLisible,
+        dateIso: dateLocaleIso
+    };
+    
+    if(dernierStatutEleves[eleve] !== undefined) {
+        dernierStatutEleves[eleve].push({
+            date: dateLocaleLisible,
+            tp: tpSelectionne.name,
+            dateIso: dateLocaleIso
+        });
+    }
+
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: JSON.stringify(nouvelleEntree)
+    })
+    .then(() => {
+        showToast(`Affectation enregistrée pour ${eleve} !`);
+        syncData(); 
+        document.getElementById('select-tp').value = "";
+        setTimeout(() => { showSection('tous'); }, 500);
+    })
+    .catch(e => {
+        hideLoader();
+        console.warn("Échec de synchronisation cloud.", e);
+        showToast("⚠️ Enregistré en local uniquement.", "warning");
+        genererCartesTableauDeBord();
+        showSection('tous');
+    });
+}
+
+function exportData() {
+    if(globalSuivi.length === 0) { showToast("L'historique est vide.", "error"); return; }
+    const formatExport = globalSuivi.map(x => ({ Date: x.date, Classe: x.classe || 'N/A', Élève: x.eleve, "Travail Pratique": x.tp }));
+    const feuille = XLSX.utils.json_to_sheet(formatExport);
+    const classeur = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(classeur, feuille, "Historique Atelier");
+    XLSX.writeFile(classeur, `Backup_Suivi_Atelier_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+function showSection(section) {
+    ['assign', 'tous', 'jour', 'retard'].forEach(id => {
+        document.getElementById(`section-${id}`).classList.toggle('hidden', id !== section);
+        document.getElementById(`nav-${id}`).classList.toggle('sidebar-active', id === section);
+        if(id !== section) document.getElementById(`nav-${id}`).classList.add('text-slate-400');
+    });
+    if(section === 'tous') { setTimeout(() => document.getElementById('search-bar').focus(), 100); }
+}
+</script>
+
+</body>
+</html>
